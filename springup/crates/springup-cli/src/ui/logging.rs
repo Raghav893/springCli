@@ -56,7 +56,7 @@ fn atty_stderr() -> bool {
     // Best-effort on non-unix: assume TTY if stderr is not redirected.
     // The `console` crate (already in our dep tree via dialoguer) provides cross-platform TTY
     // detection; we use it as a fallback.
-    console::Term::stderr().features().is_atty()
+    console::user_attended_stderr()
 }
 
 #[cfg(unix)]
