@@ -1,0 +1,42 @@
+name: Audit
+
+# Nightly security audit of dependencies. Fails on known CVEs.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # 06:00 UTC daily
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke-live-initializr:
+    # Opt-in nightly smoke test against the real https://start.spring.io.
+    # Catches upstream API drift. NEVER runs on every PR.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch real Initializr metadata
+        run: |
+          cargo run --release -- update-metadata
+      - name: Dry-run against live API
+        run: |
+          cargo run --release -- new smoke-test --yes --dry-run
