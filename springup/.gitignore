@@ -23,5 +23,7 @@ Thumbs.db
 # Insta snapshot review sessions
 /.insta/
 
-# cargo-dist working files
-/dist/
+# cargo-dist working files (but keep dist/install.sh and dist/install.ps1)
+/dist/*
+!/dist/install.sh
+!/dist/install.ps1
