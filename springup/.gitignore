@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target/
+**/target/
+**/*.rs.bk
+
+# Cargo lockfile is committed for binaries (not libraries). springup is a binary workspace.
+# (We do NOT gitignore Cargo.lock.)
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+/snapshots/*.pending
+**/snapshots/*.pending
+
+# Insta snapshot review sessions
+/.insta/
+
+# cargo-dist working files
+/dist/

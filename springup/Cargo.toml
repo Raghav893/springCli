@@ -1,0 +1,92 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/springup-cli",
+    "crates/springup-core",
+    "crates/springup-templates",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["The springup authors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/springup-cli/springup"
+homepage = "https://github.com/springup-cli/springup"
+documentation = "https://github.com/springup-cli/springup#readme"
+readme = "README.md"
+description = "A fast, production-grade Spring Boot project scaffolder written in Rust."
+keywords = ["spring-boot", "scaffold", "cli", "generator", "java"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive", "wrap_help", "env", "color"] }
+clap_complete = "4.5"
+
+# Async
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "time", "fs", "io-util", "sync"] }
+futures-util = "0.3"
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+
+# Templating & assets
+minijinja = "2.1"
+rust-embed = { version = "8.5", features = ["compression"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Errors
+thiserror = "1.0"
+color-eyre = "0.6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+
+# Terminal UX
+dialoguer = { version = "0.11", default-features = false, features = ["fuzzy-select", "editor", "completion"] }
+indicatif = "0.17"
+console = "0.15"
+owo-colors = "4"
+
+# Misc
+directories = "5"
+strsim = "0.11"
+zip = "2.1"
+walkdir = "2.5"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+uuid = { version = "1.10", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+semver = "1.0"
+once_cell = "1.19"
+
+# Test deps
+assert_cmd = "2.0"
+predicates = "3.1"
+wiremock = "0.6"
+insta = { version = "1.39", features = ["filters"] }
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dist]
+inherits = "release"
+
+# Faster incremental dev builds
+[profile.dev]
+opt-level = 0
+debug = 1

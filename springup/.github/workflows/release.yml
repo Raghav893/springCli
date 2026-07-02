@@ -1,0 +1,58 @@
+name: Release
+
+# Run on version tags. cargo-dist builds binaries for 6 targets, publishes to crates.io,
+# and creates a GitHub Release with the install script.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    name: cargo-dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # cargo-dist needs full history for changelog
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-dist
+        run: |
+          cargo install cargo-dist --version 0.25.0 || true
+      - name: Run cargo-dist plan
+        run: cargo dist plan --tag=${{ github.ref_name }}
+      - name: Build release artifacts
+        run: cargo dist build --tag=${{ github.ref_name }} --output-format=json > dist-manifest.json
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/distrib/*
+            dist-manifest.json
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish springup-templates
+        run: cargo publish -p springup-templates --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true  # already-published is fine
+      - name: Publish springup-core
+        run: cargo publish -p springup-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+      - name: Publish springup-cli
+        run: cargo publish -p springup-cli --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true

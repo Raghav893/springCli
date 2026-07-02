@@ -1,0 +1,518 @@
+     1→# Build Spec: `springup` — A Production-Grade Spring Boot Project Scaffolder in Rust
+     2→
+     3→> Hand this entire document to an AI coding assistant (Claude Code, Cursor, etc.) as the
+     4→> primary instruction set. It describes a complete, installable CLI tool — not a toy script.
+     5→> Sections are ordered so an agent can work top-to-bottom and produce a working `v0.1.0`,
+     6→> then iterate toward the full feature set.
+     7→
+     8→---
+     9→
+    10→## 0. One-line pitch
+    11→
+    12→`springup` is what `npm create`, `bun create`, and `cargo generate` are to their ecosystems,
+    13→but for Spring Boot: a fast, single static binary that interactively (or non-interactively)
+    14→scaffolds a production-ready Spring Boot backend by combining the official Spring Initializr
+    15→API with an opinionated custom template layer (architecture skeletons, Docker, CI, config
+    16→profiles) — written in Rust, distributed as a real CLI tool.
+    17→
+    18→---
+    19→
+    20→## 1. Goals & non-goals
+    21→
+    22→**Goals**
+    23→- Feel as polished and fast as `bun create` / `create-t3-app`: sub-second startup, smooth
+    24→  interactive prompts, sensible defaults, zero Java/Maven/Gradle required to just *generate*
+    25→  a project.
+    26→- Two first-class modes: interactive TUI wizard (default) and fully flag-driven non-interactive
+    27→  mode (for CI, scripting, muscle-memory power users).
+    28→- Generate real, buildable Spring Boot projects by delegating dependency/version resolution to
+    29→  the official Spring Initializr API (`https://start.spring.io`), then layering custom
+    30→  extras on top (architecture skeleton, Dockerfile, GitHub Actions, application.yml profiles).
+    31→- Be genuinely production-grade as a piece of software: proper error handling, logging,
+    32→  tests, CI, versioned releases, cross-platform binaries, shell completions, self-update.
+    33→- Support an "add" workflow later (`springup add module`) — so today's design must not paint
+    34→  the tool into a one-shot-generator corner. Use a lightweight project config file
+    35→  (`springup.toml`) written into generated projects to enable this later without a rewrite.
+    36→
+    37→**Non-goals (explicitly out of scope for v1)**
+    38→- No frontend/monorepo scaffolding (no Next.js/React generation). Backend + Docker/CI only.
+    39→- No bundling of a JVM, Maven, or Gradle. The tool never requires Java to be installed to
+    40→  *generate* a project (it may shell out to `./mvnw`/`./gradlew` only for optional post-gen
+    41→  steps like "run tests now?", which are opt-in and gracefully skipped if unavailable).
+    42→- No GUI. Terminal only.
+    43→- No plugin marketplace/registry in v1 (design for it, don't build it yet).
+    44→
+    45→---
+    46→
+    47→## 2. Prior art to study before writing code
+    48→
+    49→The agent should mentally (or actually, if it has web access) benchmark against:
+    50→- `cargo-generate` (Rust) — template mechanics, `{{placeholder}}` substitution patterns.
+    51→- `create-t3-app` (TS) — interactive prompt UX, layered "optional add-on" selection.
+    52→- `starship` (Rust) — how a beloved Rust CLI handles config file precedence, cross-platform
+    53→  installs, and shell completions.
+    54→- `bun create` / `npm create` — speed expectations and flag ergonomics.
+    55→- Spring Initializr itself (`start.spring.io`) — this tool is a client of its REST API, not a
+    56→  replacement for it. Read its API docs (`https://start.spring.io` returns machine-readable
+    57→  metadata at the root when queried with `Accept: application/json`).
+    58→
+    59→---
+    60→
+    61→## 3. Core architecture
+    62→
+    63→### 3.1 High-level flow
+    64→
+    65→```
+    66→User runs `springup new`
+    67→        │
+    68→        ▼
+    69→[Mode detection] ── flags present & non-interactive? ──► skip wizard, validate flags
+    70→        │ no
+    71→        ▼
+    72→[Interactive Wizard] (ratatui or dialoguer-based prompts)
+    73→   1. Project metadata (group, artifact, name, package, description)
+    74→   2. Spring Boot version (fetched live from Initializr metadata, cached)
+    75→   3. Build tool: Maven | Gradle (Groovy) | Gradle (Kotlin)
+    76→   4. Language: Java | Kotlin
+    77→   5. Java version
+    78→   6. Packaging: Jar | War
+    79→   7. Dependencies (multi-select, searchable, grouped by category — from Initializr metadata)
+    80→   8. [Custom layer] Architecture skeleton? (none / layered / hexagonal) — optional, user choice
+    81→   9. [Custom layer] Extras multi-select: Dockerfile, docker-compose.yml, GitHub Actions CI,
+    82→      application-{dev,prod}.yml profiles, .editorconfig, pre-commit hook, README badges
+    83→        │
+    84→        ▼
+    85→[Resolve & Plan] — build a ProjectPlan struct (see §3.3), validate combos
+    86→        │
+    87→        ▼
+    88→[Fetch base project from Initializr] (zip stream) ──► extract to temp dir
+    89→        │
+    90→        ▼
+    91→[Apply custom template layer] — inject architecture folders, Docker/CI files,
+    92→   rewrite application.yml, write springup.toml manifest
+    93→        │
+    94→        ▼
+    95→[Post-gen] — git init (optional), initial commit (optional), print summary + next steps
+    96→```
+    97→
+    98→### 3.2 Crate/module layout
+    99→
+   100→```
+   101→springup/
+   102→├── Cargo.toml
+   103→├── crates/
+   104→│   ├── springup-cli/          # binary crate — arg parsing, wizard orchestration, output
+   105→│   │   ├── src/main.rs
+   106→│   │   ├── src/cli.rs         # clap definitions
+   107→│   │   ├── src/wizard/        # interactive prompt flows
+   108→│   │   ├── src/commands/      # new.rs, add.rs, config.rs, completions.rs, update.rs
+   109→│   │   └── src/ui/            # terminal rendering helpers, spinners, theming
+   110→│   ├── springup-core/         # library crate — pure logic, fully unit-testable, no I/O-heavy CLI concerns
+   111→│   │   ├── src/plan.rs        # ProjectPlan struct + validation
+   112→│   │   ├── src/initializr/    # Spring Initializr API client + response models
+   113→│   │   ├── src/template/      # custom template engine (rendering, placeholder substitution)
+   114→│   │   ├── src/manifest.rs    # springup.toml read/write (project-level state)
+   115→│   │   └── src/config.rs      # global user config (~/.config/springup/config.toml)
+   116→│   └── springup-templates/    # embedded custom templates (architecture skeletons, CI, Docker)
+   117→│       └── assets/
+   118→│           ├── architectures/layered/
+   119→│           ├── architectures/hexagonal/
+   120→│           ├── docker/
+   121→│           ├── ci/github-actions/
+   122→│           └── config-profiles/
+   123→├── xtask/                     # cargo-xtask pattern: release automation, template asset checks
+   124→└── tests/                     # integration tests (see §8)
+   125→```
+   126→
+   127→Rationale for splitting `springup-core` out: it must be usable without a terminal (unit
+   128→tests, potential future library consumers, WASM playground, etc.) and keeps `main.rs` thin.
+   129→
+   130→### 3.3 Core data model
+   131→
+   132→```rust
+   133→/// The fully-resolved, validated description of what to generate.
+   134→/// Built by EITHER the wizard OR flag parsing — both paths converge here.
+   135→pub struct ProjectPlan {
+   136→    pub group_id: String,
+   137→    pub artifact_id: String,
+   138→    pub name: String,
+   139→    pub description: String,
+   140→    pub package_name: String,
+   141→    pub spring_boot_version: String,
+   142→    pub build_tool: BuildTool,       // Maven | GradleGroovy | GradleKotlin
+   143→    pub language: Language,          // Java | Kotlin
+   144→    pub java_version: String,
+   145→    pub packaging: Packaging,        // Jar | War
+   146→    pub dependencies: Vec<DependencyId>,   // Initializr dependency ids, e.g. "web", "data-jpa"
+   147→    pub architecture: Option<ArchitectureKind>, // None | Layered | Hexagonal
+   148→    pub extras: Vec<ExtraFeature>,   // Docker, DockerCompose, GithubActionsCi, ConfigProfiles, ...
+   149→    pub output_dir: PathBuf,
+   150→    pub git_init: bool,
+   151→    pub initial_commit: bool,
+   152→}
+   153→```
+   154→
+   155→Keep this struct serializable (`serde`). It doubles as the schema for:
+   156→- Non-interactive flags (`clap` derives directly into a builder for this struct).
+   157→- A future `--from-file plan.toml` mode (batch/reproducible generation — trivial to add
+   158→  later since the plan is already data, not scattered logic).
+   159→
+   160→### 3.4 Spring Initializr integration
+   161→
+   162→- Base URL: `https://start.spring.io`.
+   163→- On startup (or on a `springup update-metadata` command / cached with TTL), fetch
+   164→  `GET https://start.spring.io` with `Accept: application/json` to get the full metadata
+   165→  document: available Spring Boot versions, dependency list with categories/descriptions/
+   166→  compatibility ranges, Java versions, packaging options, language options.
+   167→- Cache this metadata locally (`~/.cache/springup/initializr-metadata.json` or platform
+   168→  equivalent via the `directories` crate) with a TTL (e.g. 24h) so the wizard is instant on
+   169→  repeat runs and works offline using stale-but-usable cached data (warn the user it's stale).
+   170→- To generate the actual project, call
+   171→  `GET https://start.spring.io/starter.zip?type=...&language=...&bootVersion=...&groupId=...&artifactId=...&name=...&packageName=...&packaging=...&javaVersion=...&dependencies=...`
+   172→  and stream the zip response to a temp file, then extract.
+   173→- Handle Initializr downtime/errors gracefully: clear error message, suggest retry, never
+   174→  panic. Consider a `--offline` flag that only works if a previously-downloaded base template
+   175→  cache exists (stretch goal, not required for v1).
+   176→- Validate dependency IDs against fetched metadata *before* hitting the generate endpoint, so
+   177→  users get a fast, friendly "unknown dependency 'foo', did you mean 'flyway'?" instead of a
+   178→  raw API error. Implement fuzzy matching (`strsim` crate, e.g. Jaro-Winkler) for suggestions.
+   179→
+   180→### 3.5 Custom template layer (the "extras" system)
+   181→
+   182→This is what differentiates `springup` from a bare Initializr CLI wrapper. Runs *after* the
+   183→base project is extracted.
+   184→
+   185→**Architecture skeletons** (optional, chosen interactively per §3.1 step 8):
+   186→- `layered`: generates `controller/`, `service/`, `repository/`, `dto/`, `entity/`,
+   187→  `exception/` packages under the base package, with:
+   188→  - A `GlobalExceptionHandler` using `@RestControllerAdvice`
+   189→  - A sample `ApiResponse<T>` wrapper DTO
+   190→  - A sample health-check controller wired to the chosen dependencies (e.g. if `data-jpa` is
+   191→    selected, include a minimal `Entity`/`Repository`/`Service`/`Controller` CRUD vertical
+   192→    slice as a working example, not just empty folders)
+   193→- `hexagonal`: `domain/`, `application/`, `adapter/in/web/`, `adapter/out/persistence/` —
+   194→  ports-and-adapters skeleton with a sample use case.
+   195→- `none`: skip — leave Initializr's default single-package layout untouched.
+   196→
+   197→**Extras** (multi-select, independent of architecture choice):
+   198→- `Dockerfile` — multi-stage build (build stage with the right Maven/Gradle image matching
+   199→  chosen Java version, slim JRE runtime stage), respects `packaging` (Jar/War).
+   200→- `docker-compose.yml` — service block for the app + conditionally a `postgres`/`mysql`/
+   201→  `redis` service *if* the corresponding Initializr dependency was selected (detect from
+   202→  `dependencies` list: `data-jpa`+`postgresql` driver → add postgres service, etc.).
+   203→- GitHub Actions CI (`.github/workflows/ci.yml`) — build + test workflow matching the chosen
+   204→  build tool (`mvn -B verify` or `./gradlew build`), with dependency caching configured
+   205→  correctly per build tool.
+   206→- `application-dev.yml` / `application-prod.yml` — Spring profiles split out from the default
+   207→  `application.properties`, with profile activation wired via `SPRING_PROFILES_ACTIVE` and a
+   208→  sensible dev-vs-prod default (e.g. dev uses H2/local DB, prod reads from env vars).
+   209→- `.editorconfig`, a `.gitignore` tuned for the chosen build tool (if Initializr's default is
+   210→  insufficient), and a generated `README.md` with actual project name, run instructions
+   211→  matching the build tool, and Docker instructions if Docker extra was selected.
+   212→
+   213→**Template engine mechanics**:
+   214→- Use a real templating crate (`tera` or `minijinja` — prefer `minijinja` for smaller
+   215→  footprint and no unsafe macro magic) rather than hand-rolled string replace, since files
+   216→  need conditionals (include a block only if a dependency is present) and loops (dependency
+   217→  list in README).
+   218→- All templates live in `springup-templates/assets/` and are embedded into the binary at
+   219→  compile time via `rust-embed`, so the shipped binary is fully self-contained — no runtime
+   220→  fetch needed for the custom layer (only the Initializr base project requires network).
+   221→- Template context = a serializable view derived from `ProjectPlan` (package name, whether
+   222→  each relevant dependency is present, build tool, etc.) — pass this into every render call.
+   223→
+   224→### 3.6 `springup.toml` — the project manifest
+   225→
+   226→Written to the root of every generated project. This is the `package.json` equivalent —
+   227→it's what makes a future `springup add <module>` possible without re-deriving context.
+   228→
+   229→```toml
+   230→[project]
+   231→springup_version = "0.1.0"
+   232→generated_at = "2026-07-02T10:00:00Z"
+   233→group_id = "dev.raghavarora"
+   234→artifact_id = "my-service"
+   235→package_name = "dev.raghavarora.myservice"
+   236→spring_boot_version = "3.5.0"
+   237→build_tool = "maven"
+   238→language = "java"
+   239→java_version = "21"
+   240→
+   241→[architecture]
+   242→kind = "layered"
+   243→
+   244→[extras]
+   245→enabled = ["docker", "docker-compose", "github-actions-ci", "config-profiles"]
+   246→
+   247→[dependencies]
+   248→initializr = ["web", "data-jpa", "postgresql", "validation", "security"]
+   249→```
+   250→
+   251→This file is inert metadata for v1 (the tool doesn't read it back for anything beyond a
+   252→future `add` command), but it must be written correctly and documented, since it's the
+   253→extension point for everything that comes after v1.
+   254→
+   255→---
+   256→
+   257→## 4. CLI surface (commands & flags)
+   258→
+   259→Use `clap` v4 with derive macros. Design the command tree now even though only `new` is
+   260→required for v1, so help text and completions are coherent from day one.
+   261→
+   262→```
+   263→springup new [NAME]                 Scaffold a new project (interactive if flags omitted)
+   264→springup add <MODULE>                [v2+, stub with "not yet implemented" for v1]
+   265→springup config get|set|list         Manage global user config
+   266→springup completions <SHELL>         Generate shell completion script (bash/zsh/fish/powershell)
+   267→springup update                      Self-update the binary to latest release
+   268→springup --version / -V
+   269→springup --help / -h
+   270→```
+   271→
+   272→### `springup new` flags (non-interactive mode)
+   273→
+   274→```
+   275→-n, --name <NAME>
+   276→    --group-id <GROUP_ID>              default from global config or "com.example"
+   277→    --artifact-id <ARTIFACT_ID>
+   278→    --description <DESC>
+   279→    --boot-version <VERSION>           default: latest stable per Initializr metadata
+   280→    --build-tool <maven|gradle|gradle-kotlin>
+   281→    --language <java|kotlin>
+   282→    --java-version <VERSION>
+   283→    --packaging <jar|war>
+   284→-d, --deps <DEP,DEP,...>               comma-separated Initializr dependency ids
+   285→    --architecture <none|layered|hexagonal>
+   286→    --extras <EXTRA,EXTRA,...>         docker,docker-compose,ci,config-profiles
+   287→-o, --output <DIR>                     default: ./<artifact-id>
+   288→    --git / --no-git                   default: --git
+   289→    --commit / --no-commit             default: --no-commit
+   290→-y, --yes                              accept all defaults, skip wizard entirely
+   291→    --dry-run                          print the resolved ProjectPlan as JSON/TOML, generate nothing
+   292→```
+   293→
+   294→**Interaction mode resolution rule** (this must be unambiguous, write it as actual logic, not
+   295→vibes): if stdin is not a TTY, OR any of `--yes`/`-y` is passed, OR enough required flags are
+   296→present to fully resolve a `ProjectPlan` with no ambiguity, skip the wizard and go straight to
+   297→generation, filling any *non-required* gaps with global-config defaults or hardcoded sane
+   298→defaults. If flags are partially given but insufficient, run the wizard but pre-fill/skip the
+   299→steps already answered by flags (this is the "best of both" UX — don't force an all-or-nothing
+   300→choice between flags and wizard).
+   301→
+   302→---
+   303→
+   304→## 5. Interactive wizard UX requirements
+   305→
+   306→- Library choice: `dialoguer` (simpler, more standard for this style of prompt-by-prompt
+   307→  wizard than a full `ratatui` app) is likely the right call — this is a sequence of
+   308→  select/multi-select/input prompts, not a persistent dashboard. Use `ratatui` only if you
+   309→  want a genuinely different, more visual experience (e.g. a dependency-browser split pane);
+   310→  otherwise `dialoguer` + `indicatif` (spinners/progress bars) is simpler and battle-tested.
+   311→- Every prompt needs: clear question text, sensible pre-selected default, `?`-triggerable
+   312→  inline help/description where non-obvious (e.g. showing each dependency's one-line
+   313→  description from Initializr metadata next to it in the multi-select).
+   314→- Dependency multi-select must be **searchable/filterable** (type to filter the list) — with
+   315→  60+ Initializr dependencies, an unfiltered scroll list is a bad experience. Group by
+   316→  Initializr's own categories (Web, SQL, NoSQL, Security, Messaging, Ops, etc.) with category
+   317→  headers in the list.
+   318→- Show a spinner during network calls (metadata fetch, project generation download) with
+   319→  elapsed time, and a clear failure state with retry guidance.
+   320→- End with a colorized summary: what was generated, file tree (top 2 levels), and copy-paste
+   321→  next-step commands (`cd`, build command matching build tool, run command).
+   322→- Respect `NO_COLOR` env var and `--no-color` flag. Respect `CLICOLOR_FORCE`.
+   323→- All user-facing strings centralized (not scattered `println!`) so the tool could add i18n
+   324→  later without a rewrite — a simple `messages.rs` module is enough for v1, no need for a
+   325→  full i18n crate.
+   326→
+   327→---
+   328→
+   329→## 6. Production-grade engineering requirements
+   330→
+   331→These are non-negotiable for calling this "production grade" — treat as a checklist.
+   332→
+   333→### 6.1 Error handling
+   334→- `thiserror` for typed library errors in `springup-core` (each failure mode is a distinct
+   335→  variant: `InitializrUnreachable`, `InvalidDependency { id, suggestion }`,
+   336→  `TemplateRenderError`, `IoError`, `InvalidProjectMetadata`, etc.).
+   337→- `anyhow` (or `color-eyre` for prettier terminal output) at the `springup-cli` boundary for
+   338→  ergonomic error propagation and nicely formatted terminal error reports with backtraces in
+   339→  `--verbose` mode.
+   340→- Never `unwrap()`/`panic!()` on any path reachable from user input or network I/O. `unwrap()`
+   341→  is acceptable only on genuinely-infallible internal invariants, and even then prefer
+   342→  `expect("reason")` documenting why it's infallible.
+   343→- Every network call has a timeout (`reqwest` client configured with sane connect/read
+   344→  timeouts) and a bounded retry with backoff for transient failures (`backoff` crate or
+   345→  hand-rolled exponential backoff, 3 attempts max).
+   346→
+   347→### 6.2 Logging & diagnostics
+   348→- `tracing` + `tracing-subscriber` for structured logging. `--verbose`/`-v` (repeatable, `-vv`
+   349→  for debug, `-vvv` for trace) controls log level. Default: only user-facing progress output,
+   350→  no log noise.
+   351→- `--dry-run` and `--verbose` should make it possible to fully understand what the tool *would
+   352→  do* without needing to read source.
+   353→
+   354→### 6.3 Config management (global user config)
+   355→- Location via the `directories` crate (`ProjectDirs::from("dev", "springup", "springup")`)
+   356→  → e.g. `~/.config/springup/config.toml` on Linux, correct platform equivalents on
+   357→  macOS/Windows.
+   358→- Stores: default group-id, default author/org for READMEs, default Java version, default
+   359→  build tool, preferred package manager mirror (if ever needed), telemetry opt-in flag
+   360→  (default OFF — see §6.7), color preference.
+   361→- `springup config set group-id dev.raghavarora`, `springup config get group-id`,
+   362→  `springup config list` — implement properly, not just a TODO.
+   363→- Precedence, most specific wins: CLI flags > project-local `.springuprc.toml` (if present in
+   364→  cwd) > global user config > hardcoded defaults. Document this precedence in `--help` and
+   365→  README.
+   366→
+   367→### 6.4 Testing
+   368→- Unit tests in `springup-core` for: `ProjectPlan` validation logic, template context
+   369→  derivation, dependency-id fuzzy matching, manifest serialization round-trip.
+   370→- Integration tests in `tests/` that actually run the compiled binary (`assert_cmd` crate)
+   371→  against a **mocked** Initializr server (`wiremock` or `mockito` crate) — never hit the real
+   372→  network in CI. Assert on generated file tree structure and key file contents (e.g. Dockerfile
+   373→  contains the right base image tag for the chosen Java version).
+   374→- Golden-file / snapshot tests (`insta` crate) for generated file contents (Dockerfile,
+   375→  GitHub Actions YAML, README) so template regressions are caught immediately on any template
+   376→  edit.
+   377→- A real (non-mocked) opt-in "smoke test" behind a feature flag or separate CI job that hits
+   378→  the live Initializr API once, to catch upstream API drift — run on a schedule (e.g. nightly
+   379→  GitHub Actions cron), not on every PR.
+   380→
+   381→### 6.5 CI/CD for the tool itself
+   382→- GitHub Actions workflow(s):
+   383→  - `ci.yml`: on every PR/push — `cargo fmt --check`, `cargo clippy -- -D warnings`,
+   384→    `cargo test --all-features`, run on a matrix of `ubuntu-latest`, `macos-latest`,
+   385→    `windows-latest`.
+   386→  - `release.yml`: on tag push (`v*`) — build release binaries for at minimum:
+   387→    `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` (static, for broad Linux compat),
+   388→    `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
+   389→    `x86_64-pc-windows-msvc`. Use `cargo-dist` (recommended — it generates the release
+   390→    workflow, install scripts, and Homebrew/Scoop manifests for you) rather than hand-rolling
+   391→    cross-compilation matrix YAML from scratch.
+   392→- `cargo-dist` also generates the `curl | sh` install script and can publish a Homebrew tap
+   393→  and Scoop manifest automatically — use it rather than reinventing this.
+   394→- Also publish to crates.io (`cargo publish`) as a secondary install path for Rust users who
+   395→  prefer `cargo install springup`.
+   396→
+   397→### 6.6 Documentation
+   398→- Top-level `README.md`: install instructions for every distribution channel, quickstart GIF
+   399→  or asciinema-style terminal recording reference, full command reference, architecture
+   400→  overview linking to `ARCHITECTURE.md`.
+   401→- `ARCHITECTURE.md`: the module layout from §3.2, the `ProjectPlan` data flow, how to add a
+   402→  new "extra" template.
+   403→- `CONTRIBUTING.md`: how to run tests, how to add a new architecture skeleton or extra, PR
+   404→  checklist (fmt/clippy/tests must pass).
+   405→- Every public function/struct in `springup-core` has doc comments (`cargo doc` should
+   406→  produce something genuinely useful, not empty stubs).
+   407→
+   408→### 6.7 Privacy / telemetry
+   409→- If any telemetry is ever added (usage analytics), it must be **opt-in**, off by default,
+   410→  clearly disclosed in README, and disableable via `springup config set telemetry false` and
+   411→  an env var (`SPRINGUP_TELEMETRY=0`). For v1, ship with **no telemetry at all** — simplest
+   412→  and most trustworthy default; mention this explicitly in README as a stated principle.
+   413→
+   414→### 6.8 Security
+   415→- Never execute arbitrary code from downloaded templates (the Initializr zip is data, not
+   416→  code — treat it as such; don't `eval`/shell-exec anything extracted from it).
+   417→- Validate zip extraction against path traversal (zip-slip vulnerability) — use a
+   418→  well-maintained zip crate (`zip` crate) and explicitly sanitize/verify every extracted
+   419→  path stays within the target directory before writing.
+   420→- Pin dependency versions in `Cargo.lock`, commit it (this is a binary, not a library others
+   421→  depend on — lockfile should always be committed).
+   422→- Run `cargo audit` in CI as a scheduled job to catch known vulnerabilities in dependencies.
+   423→
+   424→### 6.9 Performance
+   425→- Cold start (no cache) to first wizard prompt should feel instant (<100ms) — metadata fetch
+   426→  happens *after* the prompts that don't need it (project name, output dir) start, not
+   427→  before, so perceived latency is hidden. Fetch metadata concurrently with the first 1-2
+   428→  wizard prompts using an async task, `await` it only when the wizard reaches the
+   429→  dependency-selection step.
+   430→- Use `tokio` (async runtime, since we're doing concurrent network + prompt work) with a
+   431→  minimal feature set (`rt-multi-thread`, `macros`, `time` — not the full `full` feature
+   432→  flag, to keep binary size and compile time down).
+   433→- Release profile: enable LTO and strip symbols in `Cargo.toml` `[profile.release]`
+   434→  (`lto = true`, `strip = true`, `codegen-units = 1`) for smaller, faster binaries — the
+   435→  build-time cost is worth it for a tool distributed as prebuilt binaries.
+   436→
+   437→---
+   438→
+   439→## 7. Key crate choices (recommended, justify any deviation)
+   440→
+   441→| Concern | Crate |
+   442→|---|---|
+   443→| CLI parsing | `clap` v4 (derive) |
+   444→| Interactive prompts | `dialoguer` |
+   445→| Progress/spinners | `indicatif` |
+   446→| Async runtime | `tokio` (minimal features) |
+   447→| HTTP client | `reqwest` (rustls-tls feature, not native-tls, for easier musl static builds) |
+   448→| Templating | `minijinja` |
+   449→| Embedded assets | `rust-embed` |
+   450→| Zip handling | `zip` |
+   451→| Serialization | `serde` + `serde_json` + `toml` |
+   452→| Error types (lib) | `thiserror` |
+   453→| Error handling (bin) | `color-eyre` |
+   454→| Logging | `tracing` + `tracing-subscriber` |
+   455→| Config dirs | `directories` |
+   456→| Fuzzy matching | `strsim` |
+   457→| Colored output | `owo-colors` or `console` (pick one, `dialoguer` already pulls in `console`) |
+   458→| Testing (CLI) | `assert_cmd` + `predicates` |
+   459→| Testing (mocking) | `wiremock` |
+   460→| Testing (snapshots) | `insta` |
+   461→| Release automation | `cargo-dist` |
+   462→
+   463→---
+   464→
+   465→## 8. Milestone plan (build in this order)
+   466→
+   467→1. **Skeleton**: workspace with the three crates, `clap` CLI parsing `new` command with all
+   468→   flags (no logic yet — just parse and print the resolved struct). CI running fmt/clippy/test
+   469→   on empty test suite.
+   470→2. **Initializr client**: metadata fetch + cache, `starter.zip` fetch + extraction to temp
+   471→   dir, with mocked-server integration tests.
+   472→3. **Non-interactive `new`**: full flag-driven path works end-to-end — generates a real,
+   473→   buildable Spring Boot project with zero prompts, zero custom extras yet.
+   474→4. **Custom template layer**: architecture skeletons + extras, `minijinja` rendering,
+   475→   `springup.toml` manifest writing. Snapshot tests for every template.
+   476→5. **Interactive wizard**: full `dialoguer` flow wrapping the same `ProjectPlan` builder,
+   477→   with searchable dependency multi-select.
+   478→6. **Config system**: global config file, precedence resolution, `config` subcommand.
+   479→7. **Polish pass**: colorized summary output, `--dry-run`, shell completions, `--verbose`
+   480→   logging, error message quality pass (every error should suggest a fix).
+   481→8. **Release infrastructure**: `cargo-dist` setup, crates.io publish, README/docs finalized.
+   482→9. **v1.0.0 tag.**
+   483→
+   484→Stop and produce a working, tested artifact at the end of *every* milestone — don't build all
+   485→modules half-finished in parallel. Each milestone should be independently `cargo test`-green
+   486→and independently demoable.
+   487→
+   488→---
+   489→
+   490→## 9. Definition of done for v1.0.0
+   491→
+   492→- [ ] `cargo install springup` and `curl -fsSL <install-script-url> | sh` both work
+   493→- [ ] `springup new my-service -y` generates a buildable Spring Boot project with zero prompts
+   494→- [ ] `springup new` (no args, TTY present) runs the full interactive wizard end-to-end
+   495→- [ ] Generated project builds successfully with the chosen build tool with no manual edits
+   496→      (verify with `mvnw`/`gradlew` in integration tests where feasible, or documented manual
+   497→      verification if sandboxing Java in CI is out of scope)
+   498→- [ ] Dockerfile extra produces an image that builds successfully via `docker build`
+   499→- [ ] All six target platform binaries build in release CI
+   500→- [ ] `cargo clippy -- -D warnings` and `cargo fmt --check` clean
+   501→- [ ] Test coverage on `springup-core` logic paths (plan validation, template rendering,
+   502→      dependency matching) — no formal % target required, but every non-trivial function has
+   503→      at least one test
+   504→- [ ] README covers install (all channels), quickstart, full flag reference, architecture
+   505→      choice explanation, extras explanation
+   506→- [ ] Shell completions generate valid, loadable scripts for bash/zsh/fish
+   507→- [ ] No panics reachable from any documented user input (fuzz the flag parser lightly if
+   508→      time allows)
+   509→
+   510→---
+   511→
+   512→## 10. Naming note
+   513→
+   514→`springup` is a placeholder name used throughout this spec for consistency — rename freely
+   515→(check crates.io / npm-adjacent naming collisions before final choice; something in the
+   516→"spring-*" or "*-init" space that isn't already a popular crates.io package is worth a quick
+   517→search before committing).
+   518→

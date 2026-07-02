@@ -1,0 +1,100 @@
+---
+source: crates/springup-core/tests/snapshot_tests.rs
+expression: rendered
+---
+# demo
+
+A demo service
+
+> Scaffolded by [`springup`](https://github.com/springup-cli/springup) v0.1.0.
+
+## Tech stack
+
+| Concern | Choice |
+| --- | --- |
+| Framework | Spring Boot 3.5.0 |
+| Language | java (21) |
+| Build tool | maven |
+| Packaging | JAR |
+| Architecture | layered |
+
+
+
+## Dependencies
+
+- `web`
+- `data-jpa`
+- `postgresql`
+
+
+
+## Prerequisites
+
+- JDK 21+
+
+- (Optional) Maven 3.9+ — or just use the bundled `./mvnw` wrapper.
+
+
+## Build & run
+
+
+```bash
+# Build + run tests
+./mvnw verify
+
+# Run the app locally (dev profile)
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+
+# Run the packaged JAR
+java -jar target/demo-*.jar --spring.profiles.active=dev
+```
+
+The service starts on `http://localhost:8080`.
+
+
+Health check: `GET http://localhost:8080/api/health`
+
+
+## Configuration
+
+
+Configuration lives in `src/main/resources/application.properties`.
+
+
+## Docker
+
+
+No Dockerfile was generated. Add one with `springup add docker` (future) or write one manually.
+
+
+
+
+## CI
+
+
+No CI was generated. Add one with `springup add ci` (future) or write one manually.
+
+
+## Architecture
+
+
+Layered architecture (`controller / service / repository / dto / entity / exception`):
+
+```
+src/main/java/com/example/demo/
+├── controller/    # REST controllers
+├── service/       # Business logic
+├── repository/    # Spring Data JPA repositories
+├── dto/           # Request / response DTOs (incl. ApiResponse<T>)
+├── entity/        # JPA entities
+└── exception/     # GlobalExceptionHandler + custom exceptions
+```
+
+A sample CRUD slice (`SampleEntity` → `SampleRepository` → `SampleService` → `SampleController`)
+demonstrates the layering end-to-end. Replace it with your own domain.
+
+
+## License
+
+Copyright (c) 2026.

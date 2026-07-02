@@ -1,0 +1,50 @@
+[package]
+name = "springup-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Production-grade Spring Boot project scaffolder CLI."
+
+[lib]
+name = "springup_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "springup"
+path = "src/main.rs"
+
+[dependencies]
+springup-core = { path = "../springup-core" }
+springup-templates = { path = "../springup-templates" }
+
+clap.workspace = true
+clap_complete.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+color-eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dialoguer.workspace = true
+indicatif.workspace = true
+console.workspace = true
+owo-colors.workspace = true
+directories.workspace = true
+chrono.workspace = true
+url.workspace = true
+semver.workspace = true
+once_cell.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+wiremock.workspace = true
+zip.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }

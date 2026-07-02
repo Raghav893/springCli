@@ -1,0 +1,36 @@
+# cargo-dist configuration for springup.
+# See https://opensource.axo.dev/cargo-dist/ for full reference.
+
+[dist]
+# The desired cargo-dist version — pin to avoid surprise breaking changes.
+cargo-dist-version = "0.25.0"
+# CI backends to enable.
+ci = "github"
+# The installers to generate — `shell` produces the curl|sh installer, `powershell` the
+# Windows installer, `homebrew` and `scoop` publish to package managers.
+installers = ["shell", "powershell", "homebrew", "scoop"]
+# Target platforms to build release binaries for.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+# Publish to crates.io as part of the release.
+publish = true
+# Where to push the Homebrew tap formula.
+tap = "springup-cli/homebrew-tap"
+# Where to push the Scoop manifest.
+scoop = "springup-cli/scoop-bucket"
+# Don't auto-run on pushes to main; only on tags.
+allow-dirty = ["ci"]
+# Use a custom GitHub Actions runner label for the orchestrator.
+ci-args = { tag = "v0.25.0" }
+# The Rust toolchain to use for release builds.
+rust-toolchain-version = "1.75.0"
+
+# Per-binary install paths. springup is the only binary we ship.
+[dist.binaries]
+springup = { path = "crates/springup-cli" }

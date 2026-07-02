@@ -1,0 +1,16 @@
+[package]
+name = "springup-templates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded template assets for springup's custom layer (architecture skeletons, Docker, CI, profiles)."
+
+[lib]
+name = "springup_templates"
+path = "src/lib.rs"
+
+[dependencies]
+rust-embed.workspace = true

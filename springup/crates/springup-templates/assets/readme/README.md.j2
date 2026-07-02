@@ -1,0 +1,153 @@
+# {{ name }}
+
+{{ description }}
+
+> Scaffolded by [`springup`](https://github.com/springup-cli/springup) v{{ springup_version }}.
+
+## Tech stack
+
+| Concern | Choice |
+| --- | --- |
+| Framework | Spring Boot {{ spring_boot_version }} |
+| Language | {{ language }} ({{ java_version }}) |
+| Build tool | {{ build_tool }} |
+| Packaging | {{ packaging | upper }} |
+{% if architecture %}| Architecture | {{ architecture }} |
+{% endif %}
+
+{% if dependencies | length > 0 %}
+## Dependencies
+
+{% for dep in dependencies %}- `{{ dep }}`
+{% endfor %}
+{% endif %}
+
+## Prerequisites
+
+- JDK {{ java_version }}+
+{% if build_tool == "maven" %}
+- (Optional) Maven 3.9+ — or just use the bundled `./mvnw` wrapper.
+{% elif build_tool == "gradle" or build_tool == "gradle-kotlin" %}
+- (Optional) Gradle 8+ — or just use the bundled `./gradlew` wrapper.
+{% endif %}
+
+## Build & run
+
+{% if build_tool == "maven" %}
+```bash
+# Build + run tests
+./mvnw verify
+
+# Run the app locally (dev profile)
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+{% else %}
+```bash
+# Build + run tests
+./gradlew build
+
+# Run the app locally (dev profile)
+./gradlew bootRun --args='--spring.profiles.active=dev'
+{% endif %}
+
+# Run the packaged JAR
+java -jar target/{{ artifact_id }}-*.jar --spring.profiles.active=dev
+```
+
+The service starts on `http://localhost:8080`.
+
+{% if has_actuator %}
+Health check: `GET http://localhost:8080/actuator/health`
+{% else %}
+Health check: `GET http://localhost:8080/api/health`
+{% endif %}
+
+## Configuration
+
+{% if "config-profiles" in extras %}
+Profiles are split into `application-dev.yml` and `application-prod.yml`:
+
+- `dev` — local defaults (H2 / local DB, verbose logging)
+- `prod` — reads sensitive values from environment variables
+
+Activate with `SPRING_PROFILES_ACTIVE=prod` or `--spring.profiles.active=prod`.
+{% else %}
+Configuration lives in `src/main/resources/application.properties`.
+{% endif %}
+
+## Docker
+
+{% if "docker" in extras %}
+```bash
+# Build image
+docker build -t {{ artifact_id }}:latest .
+
+# Run
+docker run --rm -p 8080:8080 {{ artifact_id }}:latest
+```
+{% else %}
+No Dockerfile was generated. Add one with `springup add docker` (future) or write one manually.
+{% endif %}
+
+{% if "docker-compose" in extras %}
+### docker-compose
+
+```bash
+docker compose up --build
+```
+
+This starts the app plus any backing services (postgres / mysql / redis / mongo) declared at
+scaffold time.
+{% endif %}
+
+## CI
+
+{% if "ci" in extras %}
+GitHub Actions workflow at `.github/workflows/ci.yml` builds and tests every push / PR.
+{% else %}
+No CI was generated. Add one with `springup add ci` (future) or write one manually.
+{% endif %}
+
+## Architecture
+
+{% if architecture == "layered" %}
+Layered architecture (`controller / service / repository / dto / entity / exception`):
+
+```
+src/main/java/{{ package_path }}/
+├── controller/    # REST controllers
+├── service/       # Business logic
+├── repository/    # Spring Data JPA repositories
+├── dto/           # Request / response DTOs (incl. ApiResponse<T>)
+├── entity/        # JPA entities
+└── exception/     # GlobalExceptionHandler + custom exceptions
+```
+
+A sample CRUD slice (`SampleEntity` → `SampleRepository` → `SampleService` → `SampleController`)
+demonstrates the layering end-to-end. Replace it with your own domain.
+{% elif architecture == "hexagonal" %}
+Hexagonal / ports-and-adapters architecture:
+
+```
+src/main/java/{{ package_path }}/
+├── domain/                  # Pure domain: model + ports
+│   ├── model/               # Domain entities (no framework annotations)
+│   └── port/
+│       ├── in/              # Inbound ports (use cases)
+│       └── out/             # Outbound ports (driven by adapters)
+├── application/             # Use-case implementations
+└── adapter/
+    ├── in/web/              # Driving adapter: REST controllers
+    └── out/persistence/     # Driven adapter: JPA persistence
+```
+
+The domain layer has zero framework dependencies. Adapters wire it to Spring.
+{% else %}
+The default Spring Boot layout is used (single root package). Consider adding an architecture
+skeleton with `springup add architecture layered|hexagonal` (future).
+{% endif %}
+
+## License
+
+{% if author %}Copyright (c) {{ year }} {{ author }}.
+{% else %}Copyright (c) {{ year }}.
+{% endif %}

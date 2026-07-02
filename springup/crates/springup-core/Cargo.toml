@@ -1,0 +1,45 @@
+[package]
+name = "springup-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-logic library for springup: planning, validation, Spring Initializr client, templates."
+
+[lib]
+name = "springup_core"
+path = "src/lib.rs"
+
+[dependencies]
+springup-templates = { path = "../springup-templates" }
+clap.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+minijinja.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+directories.workspace = true
+strsim.workspace = true
+zip.workspace = true
+walkdir.workspace = true
+chrono.workspace = true
+url.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+semver.workspace = true
+once_cell.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+wiremock.workspace = true
+insta.workspace = true
+tempfile.workspace = true
