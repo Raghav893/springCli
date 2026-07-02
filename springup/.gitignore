@@ -11,7 +11,7 @@
 .vscode/
 *.iml
 *.swp
-
+.env
 # OS
 .DS_Store
 Thumbs.db
